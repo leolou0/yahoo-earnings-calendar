@@ -32,6 +32,11 @@ class YahooEarningsCalendar(object):
         self.delay = delay
 
     def _get_data_dict(self, url):
+         headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537. 36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cookie': 
+         }
         time.sleep(self.delay)
         page = requests.get(url)
         page_content = page.content.decode(encoding='utf-8', errors='strict')
