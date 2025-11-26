@@ -41,7 +41,10 @@ class YahooEarningsCalendar(object):
         This method parses these tags to extract earnings data.
         """
         time.sleep(self.delay)
-        page = requests.get(url)
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        page = requests.get(url, headers=headers)
         page_content = page.content.decode(encoding='utf-8', errors='strict')
         
         # Extract earnings data from data-sveltekit-fetched script tags
@@ -61,7 +64,9 @@ class YahooEarningsCalendar(object):
     def _extract_earnings_from_sveltekit(self, page_content):
         """Extract earnings data from SvelteKit data-sveltekit-fetched tags."""
         # Find all data-sveltekit-fetched script tags with visualization URL
-        pattern = r'<script type="application/json" data-sveltekit-fetched data-url="https://query[12]\.finance\.yahoo\.com/v1/finance/visualization[^"]*"[^>]*>({.*?})</script>'
+        # Use a more flexible pattern that handles different attribute orderings
+        # and HTML entities (& vs &amp;)
+        pattern = r'<script[^>]*data-sveltekit-fetched[^>]*data-url="[^"]*(?:visualization|screener)[^"]*"[^>]*>(\{.*?\})</script>'
         matches = re.findall(pattern, page_content, re.DOTALL)
         
         for match in matches:
