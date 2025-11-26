@@ -4,6 +4,7 @@ Yahoo! Earnings Calendar scraper
 import datetime
 import json
 import logging
+import re
 import requests
 import time
 
@@ -32,13 +33,98 @@ class YahooEarningsCalendar(object):
         self.delay = delay
 
     def _get_data_dict(self, url):
+        """Fetches data from Yahoo Finance page and extracts earnings data.
+        
+        The new Yahoo Finance website uses SvelteKit and embeds data in 
+        <script type="application/json" data-sveltekit-fetched ...> tags.
+        This method parses these tags to extract earnings data.
+        """
         time.sleep(self.delay)
         page = requests.get(url)
         page_content = page.content.decode(encoding='utf-8', errors='strict')
-        page_data_string = [row for row in page_content.split(
-            '\n') if row.startswith('root.App.main = ')][0][:-1]
-        page_data_string = page_data_string.split('root.App.main = ', 1)[1]
-        return json.loads(page_data_string)
+        
+        # Extract earnings data from data-sveltekit-fetched script tags
+        earnings_data = self._extract_earnings_from_sveltekit(page_content)
+        if earnings_data:
+            return earnings_data
+            
+        # Fallback: Try old format for backwards compatibility
+        try:
+            page_data_string = [row for row in page_content.split(
+                '\n') if row.startswith('root.App.main = ')][0][:-1]
+            page_data_string = page_data_string.split('root.App.main = ', 1)[1]
+            return json.loads(page_data_string)
+        except (IndexError, json.JSONDecodeError):
+            raise ValueError('Unable to parse earnings data from page')
+    
+    def _extract_earnings_from_sveltekit(self, page_content):
+        """Extract earnings data from SvelteKit data-sveltekit-fetched tags."""
+        # Find all data-sveltekit-fetched script tags with visualization URL
+        pattern = r'<script type="application/json" data-sveltekit-fetched data-url="https://query[12]\.finance\.yahoo\.com/v1/finance/visualization[^"]*"[^>]*>({.*?})</script>'
+        matches = re.findall(pattern, page_content, re.DOTALL)
+        
+        for match in matches:
+            try:
+                parsed = json.loads(match)
+                if 'body' not in parsed:
+                    continue
+                body = json.loads(parsed['body'])
+                if 'finance' not in body or 'result' not in body['finance']:
+                    continue
+                    
+                for result in body['finance']['result']:
+                    if 'documents' not in result:
+                        continue
+                    for doc in result['documents']:
+                        # Look for SP_EARNINGS type which contains earnings data
+                        if doc.get('entityIdType') == 'SP_EARNINGS':
+                            return self._convert_visualization_to_dict(result, doc)
+            except (json.JSONDecodeError, KeyError):
+                continue
+        
+        return None
+    
+    def _convert_visualization_to_dict(self, result, doc):
+        """Convert visualization API format to legacy format for compatibility."""
+        columns = [col['id'] for col in doc.get('columns', [])]
+        rows = doc.get('rows', [])
+        
+        # Convert rows to list of dictionaries
+        earnings_rows = []
+        for row in rows:
+            row_dict = {}
+            for i, col in enumerate(columns):
+                row_dict[col] = row[i] if i < len(row) else None
+            earnings_rows.append(row_dict)
+        
+        # Get total count from rawCriteria if available
+        total = len(rows)
+        if 'rawCriteria' in result:
+            try:
+                raw_criteria = json.loads(result['rawCriteria'])
+                total = result.get('total', len(rows))
+            except (json.JSONDecodeError, KeyError):
+                pass
+        
+        # Return in legacy format for compatibility
+        return {
+            'context': {
+                'dispatcher': {
+                    'stores': {
+                        'ScreenerCriteriaStore': {
+                            'meta': {
+                                'total': total
+                            }
+                        },
+                        'ScreenerResultsStore': {
+                            'results': {
+                                'rows': earnings_rows
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
     def get_next_earnings_date(self, symbol):
         """Gets the next earnings date of symbol
@@ -52,8 +138,34 @@ class YahooEarningsCalendar(object):
         url = '{0}/{1}'.format(BASE_STOCK_URL, symbol)
         try:
             page_data_dict = self._get_data_dict(url)
-            return page_data_dict['context']['dispatcher']['stores']['QuoteSummaryStore']['calendarEvents']['earnings']['earningsDate'][0]['raw']
-        except:
+            # Try new format first - check if QuoteSummaryStore data is available
+            try:
+                return page_data_dict['context']['dispatcher']['stores']['QuoteSummaryStore']['calendarEvents']['earnings']['earningsDate'][0]['raw']
+            except (KeyError, TypeError, IndexError):
+                pass
+            
+            # For new SvelteKit format, use get_earnings_of to find next date
+            earnings = self.get_earnings_of(symbol)
+            if earnings and len(earnings) > 0:
+                # Find the earliest upcoming earnings date
+                from datetime import datetime as dt
+                now = dt.utcnow()
+                for earning in sorted(earnings, key=lambda x: x.get('startdatetime', '')):
+                    start_datetime_str = earning.get('startdatetime', '')
+                    if start_datetime_str:
+                        # Parse ISO format datetime
+                        try:
+                            # Handle various datetime formats
+                            if 'T' in start_datetime_str:
+                                # Remove timezone suffix for parsing
+                                dt_str = start_datetime_str.split('.')[0] if '.' in start_datetime_str else start_datetime_str[:19]
+                                earnings_dt = dt.strptime(dt_str, '%Y-%m-%dT%H:%M:%S')
+                                if earnings_dt >= now:
+                                    return int(earnings_dt.timestamp())
+                        except ValueError:
+                            continue
+                raise Exception('No upcoming earnings date found')
+        except Exception:
             raise Exception('Invalid Symbol or Unavailable Earnings Date')
 
     def earnings_on(self, date, offset=0, count=1):
