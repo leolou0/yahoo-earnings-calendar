@@ -2,6 +2,7 @@
 Yahoo! Earnings Calendar scraper
 '''
 import datetime
+from datetime import datetime as dt, timezone
 import json
 import logging
 import re
@@ -97,14 +98,8 @@ class YahooEarningsCalendar(object):
                 row_dict[col] = row[i] if i < len(row) else None
             earnings_rows.append(row_dict)
         
-        # Get total count from rawCriteria if available
-        total = len(rows)
-        if 'rawCriteria' in result:
-            try:
-                raw_criteria = json.loads(result['rawCriteria'])
-                total = result.get('total', len(rows))
-            except (json.JSONDecodeError, KeyError):
-                pass
+        # Get total count from result metadata
+        total = result.get('total', len(rows))
         
         # Return in legacy format for compatibility
         return {
@@ -148,8 +143,7 @@ class YahooEarningsCalendar(object):
             earnings = self.get_earnings_of(symbol)
             if earnings and len(earnings) > 0:
                 # Find the earliest upcoming earnings date
-                from datetime import datetime as dt
-                now = dt.utcnow()
+                now = dt.now(timezone.utc).replace(tzinfo=None)
                 for earning in sorted(earnings, key=lambda x: x.get('startdatetime', '')):
                     start_datetime_str = earning.get('startdatetime', '')
                     if start_datetime_str:
@@ -165,8 +159,10 @@ class YahooEarningsCalendar(object):
                         except ValueError:
                             continue
                 raise Exception('No upcoming earnings date found')
-        except Exception:
-            raise Exception('Invalid Symbol or Unavailable Earnings Date')
+        except (ValueError, KeyError, TypeError) as e:
+            raise Exception('Invalid Symbol or Unavailable Earnings Date') from e
+        except Exception as e:
+            raise Exception('Invalid Symbol or Unavailable Earnings Date') from e
 
     def earnings_on(self, date, offset=0, count=1):
         """Gets earnings calendar data from Yahoo! on a specific date.
