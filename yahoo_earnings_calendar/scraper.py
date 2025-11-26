@@ -143,6 +143,7 @@ class YahooEarningsCalendar(object):
             earnings = self.get_earnings_of(symbol)
             if earnings and len(earnings) > 0:
                 # Find the earliest upcoming earnings date
+                # Use naive UTC datetime since earnings dates from API are naive
                 now = dt.now(timezone.utc).replace(tzinfo=None)
                 for earning in sorted(earnings, key=lambda x: x.get('startdatetime', '')):
                     start_datetime_str = earning.get('startdatetime', '')
@@ -159,8 +160,6 @@ class YahooEarningsCalendar(object):
                         except ValueError:
                             continue
                 raise Exception('No upcoming earnings date found')
-        except (ValueError, KeyError, TypeError) as e:
-            raise Exception('Invalid Symbol or Unavailable Earnings Date') from e
         except Exception as e:
             raise Exception('Invalid Symbol or Unavailable Earnings Date') from e
 
